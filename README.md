@@ -1,6 +1,8 @@
 # ThymerQuickNotePlugin
 Create a note in any configured collection with customizable title, prefilled, and prompted fields
 
+‼️ _In progress. Created by Claude and someone who knows nothing about coding! Suggestions and support very welcome!_ ‼️
+
 ### FEATURES
 - Quickly create timestamped notes in any configured collection
 - Customizable title templates with smart tokens ({Date}, {Time}, {Collection}, custom fields)
