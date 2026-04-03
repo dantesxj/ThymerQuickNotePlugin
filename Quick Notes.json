@@ -1,0 +1,22 @@
+{
+	"ver": 1,
+	"name": "Quick Note",
+	"icon": "ti-pencil",
+	"item_name": "Note",
+	"description": "Add templated Notes with per-Collection Property Prompts & Auto-fills",
+	"show_sidebar_items": true,
+	"show_cmdpal_items": true,
+	"views": [],
+	"fields": [],
+	"page_field_ids": [],
+	"sidebar_record_sort_field_id": "updated_at",
+	"sidebar_record_sort_dir": "desc",
+	"managed": {
+		"fields": false,
+		"views": false,
+		"sidebar": false
+	},
+	"custom": {},
+	"home": false,
+	"color": null
+}
