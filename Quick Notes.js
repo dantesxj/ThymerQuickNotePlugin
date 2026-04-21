@@ -4,6 +4,320 @@
 // icon: ti-bolt
 // ==/Plugin==
 
+
+
+// @generated BEGIN thymer-ext-path-b (source: plugins/plugin-settings/ThymerExtPathBRuntime.js — edit that file, then npm run embed-path-b)
+/**
+ * ThymerExtPathB — shared path-B storage (Plugin Settings collection + localStorage mirror).
+ * Edit this file in the repo, then run `npm run embed-path-b` to refresh embedded copies inside each Path B plugin.
+ *
+ * API: ThymerExtPathB.init({ plugin, pluginId, modeKey, mirrorKeys, label, data, ui })
+ *      ThymerExtPathB.scheduleFlush(plugin, mirrorKeys)
+ *      ThymerExtPathB.openStorageDialog(plugin, { pluginId, modeKey, mirrorKeys, label, data, ui })
+ */
+(function pathBRuntime(g) {
+  if (g.ThymerExtPathB) return;
+
+  const COL_NAME = 'Plugin Settings';
+  const q = [];
+  let busy = false;
+
+  function drain() {
+    if (busy || !q.length) return;
+    busy = true;
+    const job = q.shift();
+    Promise.resolve(typeof job === 'function' ? job() : job)
+      .catch((e) => console.error('[ThymerExtPathB]', e))
+      .finally(() => {
+        busy = false;
+        if (q.length) setTimeout(drain, 450);
+      });
+  }
+
+  function enqueue(job) {
+    q.push(job);
+    drain();
+  }
+
+  async function findColl(data) {
+    try {
+      const all = await data.getAllCollections();
+      return all.find((c) => (c.getName?.() || '') === COL_NAME) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function readDoc(data, pluginId) {
+    const coll = await findColl(data);
+    if (!coll) return null;
+    let records;
+    try {
+      records = await coll.getAllRecords();
+    } catch (_) {
+      return null;
+    }
+    const r = records.find((x) => (x.text?.('plugin_id') || '').trim() === pluginId);
+    if (!r) return null;
+    let raw = '';
+    try {
+      raw = r.text?.('settings_json') || '';
+    } catch (_) {}
+    if (!raw || !String(raw).trim()) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function writeDoc(data, pluginId, doc) {
+    const coll = await findColl(data);
+    if (!coll) return;
+    const json = JSON.stringify(doc);
+    let records;
+    try {
+      records = await coll.getAllRecords();
+    } catch (_) {
+      return;
+    }
+    let r = records.find((x) => (x.text?.('plugin_id') || '').trim() === pluginId);
+    if (!r) {
+      let guid = null;
+      try {
+        guid = coll.createRecord?.(pluginId);
+      } catch (_) {}
+      if (guid) {
+        for (let i = 0; i < 30; i++) {
+          await new Promise((res) => setTimeout(res, i < 8 ? 100 : 200));
+          try {
+            const again = await coll.getAllRecords();
+            r = again.find((x) => x.guid === guid) || again.find((x) => (x.text?.('plugin_id') || '').trim() === pluginId);
+            if (r) break;
+          } catch (_) {}
+        }
+      }
+    }
+    if (!r) return;
+    try {
+      const pId = r.prop?.('plugin_id');
+      if (pId && typeof pId.set === 'function') pId.set(pluginId);
+    } catch (_) {}
+    try {
+      const pj = r.prop?.('settings_json');
+      if (pj && typeof pj.set === 'function') pj.set(json);
+    } catch (_) {}
+  }
+
+  function showFirstRunDialog(ui, label, preferred, onPick) {
+    const id = 'thymerext-pathb-first-' + Math.random().toString(36).slice(2);
+    const box = document.createElement('div');
+    box.id = id;
+    box.style.cssText =
+      'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+    const card = document.createElement('div');
+    card.style.cssText =
+      'max-width:420px;width:100%;background:var(--panel-bg-color,#1d1915);border:1px solid var(--border-default,#3f3f46);border-radius:12px;padding:20px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+    const title = document.createElement('div');
+    title.textContent = label + ' — where to store settings?';
+    title.style.cssText = 'font-weight:700;font-size:15px;margin-bottom:10px;';
+    const hint = document.createElement('div');
+    hint.textContent = 'Change later via Command Palette → “Storage location…”';
+    hint.style.cssText = 'font-size:12px;color:var(--text-muted,#888);margin-bottom:16px;line-height:1.45;';
+    const mk = (t, sub, prim) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.style.cssText =
+        'display:block;width:100%;text-align:left;padding:12px 14px;margin-bottom:10px;border-radius:8px;cursor:pointer;font-size:14px;border:1px solid var(--border-default,#3f3f46);background:' +
+        (prim ? 'rgba(167,139,250,0.25)' : 'transparent') +
+        ';color:inherit;';
+      const x = document.createElement('div');
+      x.textContent = t;
+      x.style.fontWeight = '600';
+      b.appendChild(x);
+      if (sub) {
+        const s = document.createElement('div');
+        s.textContent = sub;
+        s.style.cssText = 'font-size:11px;opacity:0.75;margin-top:4px;line-height:1.35;';
+        b.appendChild(s);
+      }
+      return b;
+    };
+    const bLoc = mk('This device only', 'Browser localStorage only.', preferred === 'local');
+    const bSyn = mk('Sync via Plugin Settings', 'Workspace collection “' + COL_NAME + '”.', preferred === 'synced');
+    const fin = (m) => {
+      try {
+        box.remove();
+      } catch (_) {}
+      onPick(m);
+    };
+    bLoc.addEventListener('click', () => fin('local'));
+    bSyn.addEventListener('click', () => fin('synced'));
+    card.appendChild(title);
+    card.appendChild(hint);
+    card.appendChild(bLoc);
+    card.appendChild(bSyn);
+    box.appendChild(card);
+    document.body.appendChild(box);
+  }
+
+  g.ThymerExtPathB = {
+    COL_NAME,
+    enqueue,
+    async init(opts) {
+      const { plugin, pluginId, modeKey, mirrorKeys, label, data, ui } = opts;
+      let mode = null;
+      try {
+        mode = localStorage.getItem(modeKey);
+      } catch (_) {}
+
+      const remote = await readDoc(data, pluginId);
+      if (!mode && remote && (remote.storageMode === 'synced' || remote.storageMode === 'local')) {
+        mode = remote.storageMode;
+        try {
+          localStorage.setItem(modeKey, mode);
+        } catch (_) {}
+      }
+
+      if (!mode) {
+        const coll = await findColl(data);
+        const preferred = coll ? 'synced' : 'local';
+        await new Promise((outerResolve) => {
+          enqueue(async () => {
+            const picked = await new Promise((r) => {
+              showFirstRunDialog(ui, label, preferred, r);
+            });
+            try {
+              localStorage.setItem(modeKey, picked);
+            } catch (_) {}
+            outerResolve(picked);
+          });
+        });
+        try {
+          mode = localStorage.getItem(modeKey);
+        } catch (_) {}
+      }
+
+      plugin._pathBMode = mode === 'synced' ? 'synced' : 'local';
+      plugin._pathBPluginId = pluginId;
+      const keys = typeof mirrorKeys === 'function' ? mirrorKeys() : mirrorKeys;
+
+      if (plugin._pathBMode === 'synced' && remote && remote.payload && typeof remote.payload === 'object') {
+        for (const k of keys) {
+          const v = remote.payload[k];
+          if (typeof v === 'string') {
+            try {
+              localStorage.setItem(k, v);
+            } catch (_) {}
+          }
+        }
+      }
+
+      if (plugin._pathBMode === 'synced') {
+        try {
+          await g.ThymerExtPathB.flushNow(data, pluginId, keys);
+        } catch (_) {}
+      }
+    },
+
+    scheduleFlush(plugin, mirrorKeys) {
+      if (plugin._pathBMode !== 'synced') return;
+      const keys = typeof mirrorKeys === 'function' ? mirrorKeys() : mirrorKeys;
+      if (plugin._pathBFlushTimer) clearTimeout(plugin._pathBFlushTimer);
+      plugin._pathBFlushTimer = setTimeout(() => {
+        plugin._pathBFlushTimer = null;
+        const data = plugin.data;
+        const pid = plugin._pathBPluginId;
+        if (!pid || !data) return;
+        g.ThymerExtPathB.flushNow(data, pid, keys).catch((e) => console.error('[ThymerExtPathB] flush', e));
+      }, 500);
+    },
+
+    async flushNow(data, pluginId, mirrorKeys) {
+      const keys = typeof mirrorKeys === 'function' ? mirrorKeys() : mirrorKeys;
+      const payload = {};
+      for (const k of keys) {
+        try {
+          const v = localStorage.getItem(k);
+          if (v !== null) payload[k] = v;
+        } catch (_) {}
+      }
+      const doc = {
+        v: 1,
+        storageMode: 'synced',
+        updatedAt: new Date().toISOString(),
+        payload,
+      };
+      await writeDoc(data, pluginId, doc);
+    },
+
+    async openStorageDialog(opts) {
+      const { plugin, pluginId, modeKey, mirrorKeys, label, data, ui } = opts;
+      const cur = plugin._pathBMode === 'synced' ? 'synced' : 'local';
+      const pick = await new Promise((resolve) => {
+        const close = (v) => {
+          try {
+            box.remove();
+          } catch (_) {}
+          resolve(v);
+        };
+        const box = document.createElement('div');
+        box.style.cssText =
+          'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+        box.addEventListener('click', (e) => {
+          if (e.target === box) close(null);
+        });
+        const card = document.createElement('div');
+        card.style.cssText =
+          'max-width:400px;width:100%;background:var(--panel-bg-color,#1d1915);border:1px solid var(--border-default,#3f3f46);border-radius:12px;padding:18px;';
+        card.addEventListener('click', (e) => e.stopPropagation());
+        const t = document.createElement('div');
+        t.textContent = label + ' — storage';
+        t.style.cssText = 'font-weight:700;margin-bottom:12px;';
+        const b1 = document.createElement('button');
+        b1.type = 'button';
+        b1.textContent = 'This device only';
+        const b2 = document.createElement('button');
+        b2.type = 'button';
+        b2.textContent = 'Sync via Plugin Settings';
+        [b1, b2].forEach((b) => {
+          b.style.cssText =
+            'display:block;width:100%;padding:10px 12px;margin-bottom:8px;border-radius:8px;cursor:pointer;border:1px solid var(--border-default,#3f3f46);background:transparent;color:inherit;text-align:left;';
+        });
+        b1.addEventListener('click', () => close('local'));
+        b2.addEventListener('click', () => close('synced'));
+        const bx = document.createElement('button');
+        bx.type = 'button';
+        bx.textContent = 'Cancel';
+        bx.style.cssText =
+          'margin-top:8px;padding:8px 14px;border-radius:8px;cursor:pointer;border:1px solid var(--border-default,#3f3f46);background:transparent;color:inherit;';
+        bx.addEventListener('click', () => close(null));
+        card.appendChild(t);
+        card.appendChild(b1);
+        card.appendChild(b2);
+        card.appendChild(bx);
+        box.appendChild(card);
+        document.body.appendChild(box);
+      });
+      if (!pick || pick === cur) return;
+      try {
+        localStorage.setItem(modeKey, pick);
+      } catch (_) {}
+      plugin._pathBMode = pick === 'synced' ? 'synced' : 'local';
+      const keys = typeof mirrorKeys === 'function' ? mirrorKeys() : mirrorKeys;
+      if (pick === 'synced') await g.ThymerExtPathB.flushNow(data, pluginId, keys);
+      ui.addToaster?.({
+        title: label,
+        message: 'Storage: ' + (pick === 'synced' ? 'synced' : 'local only'),
+        dismissible: true,
+        autoDestroyTime: 3500,
+      });
+    },
+  };
+
+})(typeof globalThis !== 'undefined' ? globalThis : window);
+// @generated END thymer-ext-path-b
+
 /*
   SIDEBAR  : ⚡ Quick Note
   CMD+K    : "Quick Note" | "Quick Note: Configure"
@@ -20,7 +334,16 @@ const QN_TEMPLATES_COLL = 'Quick Note Templates';
 
 class Plugin extends AppPlugin {
 
-  onLoad() {
+  async onLoad() {
+    await (globalThis.ThymerExtPathB?.init?.({
+      plugin: this,
+      pluginId: 'quick-notes',
+      modeKey: 'thymerext_ps_mode_quick_notes',
+      mirrorKeys: () => [QN_STORAGE_KEY],
+      label: 'Quick Note',
+      data: this.data,
+      ui: this.ui,
+    }) ?? (console.warn('[Quick Note] ThymerExtPathB runtime missing (redeploy full plugin .js from repo).'), Promise.resolve()));
     this._eventHandlerIds = [];
     this._running         = false; // guard against double-trigger
     this._config          = this._loadConfig();
@@ -43,6 +366,21 @@ class Plugin extends AppPlugin {
     this.ui.addCommandPaletteCommand({
       label: 'Insert Template Here', icon: 'ti-template',
       onSelected: () => this._insertTemplateAtCursor(),
+    });
+    this.ui.addCommandPaletteCommand({
+      label: 'Quick Note: Storage location…',
+      icon: 'ti-database',
+      onSelected: () => {
+        globalThis.ThymerExtPathB?.openStorageDialog?.({
+          plugin: this,
+          pluginId: 'quick-notes',
+          modeKey: 'thymerext_ps_mode_quick_notes',
+          mirrorKeys: () => [QN_STORAGE_KEY],
+          label: 'Quick Note',
+          data: this.data,
+          ui: this.ui,
+        });
+      },
     });
   }
 
@@ -76,6 +414,7 @@ class Plugin extends AppPlugin {
 
   _saveConfig() {
     try { localStorage.setItem(QN_STORAGE_KEY, JSON.stringify(this._config)); } catch (_) {}
+    globalThis.ThymerExtPathB?.scheduleFlush?.(this, () => [QN_STORAGE_KEY]);
   }
 
   // =========================================================================
@@ -108,6 +447,7 @@ class Plugin extends AppPlugin {
         promptedFields: saved.fields         || [],
         fieldConfig:    saved.fieldConfig    || {},
         autoFillDate:   saved.autoFillDate   !== undefined ? saved.autoFillDate : 'When',
+        promptDateIncludesTime: saved.promptDateIncludesTime === true,
         autoFillFields: saved.autoFillFields || [],
         titleTemplate:  saved.titleTemplate  || '{Date}. {Time}. {Collection}',
         templateGuid:   saved.templateGuid   || '',
@@ -166,6 +506,7 @@ class Plugin extends AppPlugin {
             fields:        item.promptedFields,
             fieldConfig:   item.fieldConfig,
             autoFillDate:  item.autoFillDate,
+            promptDateIncludesTime: item.promptDateIncludesTime === true,
             autoFillFields: item.autoFillFields,
             titleTemplate: item.titleTemplate,
             templateGuid:  item.templateGuid || '',
@@ -283,8 +624,12 @@ class Plugin extends AppPlugin {
       nspan.textContent=fname; nspan.style.cssText='font-weight:600;font-size:13px;flex:1;padding-top:3px;min-width:80px;';
       const cfg = document.createElement('div');
       cfg.style.cssText='display:flex;flex-direction:column;gap:6px;flex:2;';
-      cfg.appendChild(this._miniRow('Type', this._miniSelect(['text','reference','choice'], fconf.type||'text', v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].type=v; rerender(); })));
-      if ((fconf.type||'text')==='reference') cfg.appendChild(this._miniRow('Source collection', this._miniInput(fconf.sourceCollection||'People', v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].sourceCollection=v; })));
+      cfg.appendChild(this._miniRow('Type', this._miniSelect(['text','reference','choice','date'], fconf.type||'text', v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].type=v; rerender(); })));
+      if ((fconf.type||'text')==='date') cfg.appendChild(this._miniRow('Include time', this._miniCheckbox(!!fconf.dateIncludesTime, v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].dateIncludesTime=v; })));
+      if ((fconf.type||'text')==='reference') {
+        cfg.appendChild(this._miniRow('Source collection', this._miniInput(fconf.sourceCollection||'People', v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].sourceCollection=v; })));
+        cfg.appendChild(this._miniRow('Allow multiple', this._miniCheckbox(!!fconf.referenceMultiple, v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].referenceMultiple=v; })));
+      }
       if ((fconf.type||'text')==='choice')    cfg.appendChild(this._miniRow('Choices (comma-sep)', this._miniInput((fconf.choices||[]).join(', '), v => { item.fieldConfig[fname]=item.fieldConfig[fname]||{}; item.fieldConfig[fname].choices=v.split(',').map(s=>s.trim()).filter(Boolean); })));
       const ord = document.createElement('div');
       ord.style.cssText='display:flex;flex-direction:column;gap:2px;flex-shrink:0;';
@@ -327,7 +672,7 @@ class Plugin extends AppPlugin {
     const sec = document.createElement('div');
 
     // Date field auto-fill
-    sec.appendChild(this._cfgLabel('Date Field', 'Auto-filled with today\'s date on creation'));
+    sec.appendChild(this._cfgLabel('Date Field', 'Auto-filled with today\'s date on creation (skipped if this field is also listed under Prompted Fields — you\'ll get a calendar instead)'));
 
     const dateRow = document.createElement('div');
     dateRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:16px;';
@@ -375,6 +720,26 @@ class Plugin extends AppPlugin {
     dateRow.appendChild(dateSel);
     dateRow.appendChild(custDateInp);
     sec.appendChild(dateRow);
+
+    const timeDefaultRow = document.createElement('div');
+    timeDefaultRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;';
+    const timeDefaultCb = document.createElement('input');
+    timeDefaultCb.type = 'checkbox';
+    timeDefaultCb.id = `qn-prompt-time-${item.name}`;
+    timeDefaultCb.checked = item.promptDateIncludesTime === true;
+    timeDefaultCb.style.cssText = 'width:16px;height:16px;cursor:pointer;accent-color:var(--color-primary-500,#a78bfa);flex-shrink:0;';
+    timeDefaultCb.addEventListener('change', () => { item.promptDateIncludesTime = timeDefaultCb.checked; });
+    const timeDefaultLbl = document.createElement('label');
+    timeDefaultLbl.htmlFor = timeDefaultCb.id;
+    timeDefaultLbl.textContent = 'Include time in date prompt (default)';
+    timeDefaultLbl.style.cssText = 'font-size:13px;cursor:pointer;user-select:none;';
+    const timeDefaultHint = document.createElement('span');
+    timeDefaultHint.textContent = 'When the field type does not force date-only or date+time, the calendar dialog starts with or without time; you can still change it there.';
+    timeDefaultHint.style.cssText = 'font-size:11px;color:var(--text-muted,#888);width:100%;';
+    timeDefaultRow.appendChild(timeDefaultCb);
+    timeDefaultRow.appendChild(timeDefaultLbl);
+    sec.appendChild(timeDefaultRow);
+    sec.appendChild(timeDefaultHint);
 
     // Other auto-fill fields
     sec.appendChild(this._cfgLabel('Other Auto-Fill Fields', 'Set on record creation without prompting (supports {Date}, {Time}, {Collection} tokens)'));
@@ -540,11 +905,19 @@ class Plugin extends AppPlugin {
       const promptedFields = conf.fields || [];
       const titleTemplate  = conf.titleTemplate || '{Date}. {Time}. {Collection}';
       const templateGuid   = conf.templateGuid  || '';
+      const discoveredFields = await this._discoverFields(chosen);
+      const fieldMetaByName  = Object.fromEntries(discoveredFields.map(f => [f.name, f]));
 
       // Prompt each field
       const fieldValues = {};
       for (const fieldName of promptedFields) {
-        const value = await this._promptField(fieldName, conf.fieldConfig?.[fieldName] || {}, allCollections);
+        const value = await this._promptField(
+          fieldName,
+          conf.fieldConfig?.[fieldName] || {},
+          allCollections,
+          fieldMetaByName[fieldName],
+          conf
+        );
         if (value === null) return;
         fieldValues[fieldName] = value;
       }
@@ -577,9 +950,10 @@ class Plugin extends AppPlugin {
       const record     = allRecords.find(r => r.guid === newGuid);
 
       if (record) {
-        // Auto-fill date field
+        // Auto-fill date field (skip if user prompts for that field — calendar sets it later)
         const autoFillDate = conf.autoFillDate !== undefined ? conf.autoFillDate : 'When';
-        if (autoFillDate) {
+        const dateFieldPrompted = autoFillDate && promptedFields.includes(autoFillDate);
+        if (autoFillDate && !dateFieldPrompted) {
           try {
             const prop = record.prop(autoFillDate);
             if (prop) {
@@ -601,9 +975,32 @@ class Plugin extends AppPlugin {
 
         for (const [fname, val] of Object.entries(fieldValues)) {
           try {
-            const prop   = record.prop(fname);
+            const prop = record.prop(fname);
             if (!prop) continue;
-            const setVal = val.guid !== undefined ? val.guid : val.displayValue;
+            if (val.multi === true && Array.isArray(val.guids) && val.guids.length > 0) {
+              this._setMultiReference(prop, val.guids);
+              continue;
+            }
+            if (val.guid !== undefined && val.guid !== null) {
+              prop.set(val.guid);
+              continue;
+            }
+            if (val.dateValue instanceof Date && !isNaN(val.dateValue.getTime())) {
+              const isDt = val.isDateTime === true;
+              if (isDt) {
+                if (typeof DateTime !== 'undefined') prop.set(new DateTime(val.dateValue).value());
+                else prop.set(val.dateValue);
+              } else {
+                const d = val.dateValue;
+                if (typeof DateTime !== 'undefined') {
+                  prop.set(DateTime.dateOnly(d.getFullYear(), d.getMonth(), d.getDate()).value());
+                } else {
+                  prop.set(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0));
+                }
+              }
+              continue;
+            }
+            const setVal = val.displayValue;
             if (setVal !== null && setVal !== undefined && setVal !== '') prop.set(setVal);
           } catch (_) {}
         }
@@ -795,6 +1192,131 @@ class Plugin extends AppPlugin {
   // Pickers
   // =========================================================================
 
+  _setMultiReference(prop, guids) {
+    if (!guids || guids.length === 0) return;
+    if (guids.length === 1) {
+      try { prop.set(guids[0]); } catch (_) {}
+      return;
+    }
+    try {
+      prop.set(guids);
+      return;
+    } catch (_) {}
+    try {
+      prop.set(JSON.stringify(guids));
+      return;
+    } catch (_) {}
+    try {
+      prop.set(guids.join(','));
+    } catch (_) {}
+  }
+
+  _promptReferenceMulti(fieldName, records) {
+    return new Promise((resolve) => {
+      const panel = this.ui.getActivePanel();
+      let left = Math.round(window.innerWidth / 2) - 190;
+      let top  = Math.round(window.innerHeight / 5);
+      if (panel) {
+        const el = panel.getElement();
+        if (el) {
+          const r = el.getBoundingClientRect();
+          left = Math.round(r.left + r.width / 2) - 190;
+          top  = Math.round(r.top + 60);
+        }
+      }
+      const box = document.createElement('div');
+      box.style.cssText = `position:fixed;left:${Math.max(12, left)}px;top:${Math.max(12, top)}px;width:380px;max-height:min(420px,calc(100vh - 24px));background:var(--cmdpal-bg-color,var(--panel-bg-color,#1d1915));border:1px solid var(--border-default,#3f3f46);border-radius:10px;box-shadow:var(--cmdpal-box-shadow,0 8px 32px rgba(0,0,0,0.5));padding:14px;z-index:99999;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;`;
+      const lbl = document.createElement('div');
+      lbl.textContent = fieldName + ' (select any, then OK)';
+      lbl.style.cssText = 'font-weight:600;font-size:14px;';
+      const search = document.createElement('input');
+      search.type = 'text';
+      search.placeholder = 'Filter records…';
+      search.style.cssText = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border-default,#3f3f46);background:var(--input-bg-color,#181511);color:inherit;font-size:13px;box-sizing:border-box;outline:none;';
+      const listWrap = document.createElement('div');
+      listWrap.style.cssText = 'flex:1;min-height:120px;max-height:260px;overflow:auto;border:1px solid var(--border-default,#3f3f46);border-radius:6px;padding:4px 2px;';
+      const selected = new Map();
+      const sorted = () => [...records].sort((a, b) => (a.getName() || '').localeCompare(b.getName() || '', undefined, { sensitivity: 'base' }));
+      const renderList = () => {
+        listWrap.innerHTML = '';
+        const q = (search.value || '').trim().toLowerCase();
+        for (const r of sorted()) {
+          const name = r.getName() || 'Untitled';
+          if (q && !name.toLowerCase().includes(q)) continue;
+          const row = document.createElement('label');
+          row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;cursor:pointer;font-size:13px;';
+          row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-hover,rgba(255,255,255,0.06))'; });
+          row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = selected.has(r.guid);
+          cb.style.cssText = 'width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:var(--color-primary-500,#a78bfa);';
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.set(r.guid, name);
+            else selected.delete(r.guid);
+          });
+          const span = document.createElement('span');
+          span.textContent = name;
+          span.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          row.appendChild(cb);
+          row.appendChild(span);
+          listWrap.appendChild(row);
+        }
+        if (!listWrap.children.length) {
+          const empty = document.createElement('div');
+          empty.textContent = records.length ? 'No matches.' : 'No records in source collection.';
+          empty.style.cssText = 'padding:12px;color:var(--text-muted,#888);font-size:13px;text-align:center;';
+          listWrap.appendChild(empty);
+        }
+      };
+      search.addEventListener('input', renderList);
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;';
+      const skipBtn = document.createElement('button');
+      skipBtn.textContent = 'Skip';
+      skipBtn.style.cssText = this._btnStyle('secondary');
+      const okBtn = document.createElement('button');
+      okBtn.textContent = 'OK';
+      okBtn.style.cssText = this._btnStyle('primary');
+      btnRow.appendChild(skipBtn);
+      btnRow.appendChild(okBtn);
+      box.appendChild(lbl);
+      box.appendChild(search);
+      box.appendChild(listWrap);
+      box.appendChild(btnRow);
+      document.body.appendChild(box);
+      renderList();
+      let resolved = false;
+      const done = (val) => {
+        if (resolved) return;
+        resolved = true;
+        box.remove();
+        resolve(val);
+      };
+      okBtn.addEventListener('click', () => {
+        const guids = [...selected.keys()];
+        const names = guids.map((g) => selected.get(g));
+        done({ displayValue: names.join(', '), guids, multi: true });
+      });
+      skipBtn.addEventListener('click', () => done({ displayValue: '', guids: [], multi: true }));
+      search.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          done(null);
+        }
+      });
+      const onOut = (e) => {
+        if (!box.contains(e.target)) {
+          document.removeEventListener('pointerdown', onOut, true);
+          done(null);
+        }
+      };
+      document.addEventListener('pointerdown', onOut, true);
+      requestAnimationFrame(() => search.focus());
+    });
+  }
+
   _pickFromDropdown(options, placeholder) {
     return new Promise((resolve) => {
       const panel = this.ui.getActivePanel();
@@ -820,11 +1342,45 @@ class Plugin extends AppPlugin {
     });
   }
 
-  async _promptField(fieldName, fieldConf, allCollections) {
+  _shouldPromptWithDatePicker(fieldName, fieldConf, fieldMeta, conf) {
+    const t = fieldConf.type || 'text';
+    if (t === 'date') return true;
+    const st = fieldMeta?.type || '';
+    if (st === 'date' || st === 'datetime') return true;
+    const auto = conf.autoFillDate !== undefined ? conf.autoFillDate : 'When';
+    return !!auto && fieldName === auto;
+  }
+
+  /**
+   * Thymer often labels "When"-style fields as schema type `datetime`, but users still want
+   * date-only prompts. Only true date-only schema fields lock the UI; everything else follows
+   * per-field Type → Include time, or the collection "Include time in date prompt (default)" setting.
+   */
+  _datePromptTimeMode(fieldConf, fieldMeta, conf) {
+    const st = fieldMeta?.type || '';
+    if (st === 'date') {
+      return { includeTime: false, locked: 'date' };
+    }
+    let includeTime = false;
+    if ((fieldConf.type || 'text') === 'date') {
+      includeTime = fieldConf.dateIncludesTime === true;
+    } else {
+      includeTime = conf.promptDateIncludesTime === true;
+    }
+    return { includeTime, locked: null };
+  }
+
+  async _promptField(fieldName, fieldConf, allCollections, fieldMeta, conf) {
+    if (this._shouldPromptWithDatePicker(fieldName, fieldConf, fieldMeta, conf)) {
+      return this._promptDate(fieldName, fieldConf, fieldMeta, conf);
+    }
     const type = fieldConf.type || 'text';
     if (type === 'reference') {
       const sourceColl = allCollections.find(c => c.getName() === (fieldConf.sourceCollection || 'People'));
       const records    = sourceColl ? await sourceColl.getAllRecords() : [];
+      if (fieldConf.referenceMultiple === true) {
+        return this._promptReferenceMulti(fieldName, records);
+      }
       const options    = records.map(r => ({ label: r.getName()||'Untitled', value: { displayValue: r.getName()||'Untitled', guid: r.guid } }));
       options.push({ label: '— Skip —', value: { displayValue: '', guid: undefined } });
       return this._pickFromDropdown(options, `Search ${fieldName}…`);
@@ -837,13 +1393,180 @@ class Plugin extends AppPlugin {
     return this._promptText(fieldName);
   }
 
+  _formatDateParts(d) {
+    const yyyy = d.getFullYear();
+    const mm   = String(d.getMonth() + 1).padStart(2, '0');
+    const dd   = String(d.getDate()).padStart(2, '0');
+    const hh   = String(d.getHours()).padStart(2, '0');
+    const min  = String(d.getMinutes()).padStart(2, '0');
+    return { dateStr: `${yyyy}.${mm}.${dd}`, timeStr: `${hh}:${min}` };
+  }
+
+  _parseDateInputValue(inp) {
+    if (!inp.value) return null;
+    if (inp.type === 'datetime-local') {
+      const d = new Date(inp.value);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const parts = inp.value.split('-').map(Number);
+    if (parts.length < 3 || parts.some(n => Number.isNaN(n))) return null;
+    const [y, m, day] = parts;
+    return new Date(y, m - 1, day, 12, 0, 0);
+  }
+
+  _fillDateInput(inp, d, includeTime) {
+    const pad = (n) => String(n).padStart(2, '0');
+    if (!d || isNaN(d.getTime())) return;
+    if (includeTime) {
+      inp.type = 'datetime-local';
+      inp.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } else {
+      inp.type = 'date';
+      inp.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+  }
+
+  _qnPromptShellPosition(panel) {
+    let left = Math.round(window.innerWidth / 2) - 175;
+    let top  = Math.round(window.innerHeight / 3);
+    if (panel) {
+      const el = panel.getElement();
+      if (el) {
+        const r = el.getBoundingClientRect();
+        left = Math.round(r.left + r.width / 2) - 175;
+        top  = Math.round(r.top + 80);
+      }
+    }
+    return { left, top };
+  }
+
+  /** Frosted panel styling aligned with journal footer plugins (Today's Notes / Highlights). */
+  _qnFrostedPromptShellStyle(left, top) {
+    return `position:fixed;left:${left}px;top:${top}px;width:350px;`
+      + `background:rgba(30,28,36,0.72);`
+      + `backdrop-filter:blur(18px) saturate(1.35);-webkit-backdrop-filter:blur(18px) saturate(1.35);`
+      + `border:1px solid rgba(255,255,255,0.12);border-radius:12px;`
+      + `box-shadow:0 12px 40px rgba(0,0,0,0.45);`
+      + `padding:16px;z-index:99999;display:flex;flex-direction:column;gap:10px;`;
+  }
+
+  _promptDate(fieldName, fieldConf, fieldMeta, conf) {
+    return new Promise((resolve) => {
+      const { includeTime: initialInclude, locked } = this._datePromptTimeMode(fieldConf, fieldMeta, conf);
+      let includeTime = initialInclude;
+
+      const panel = this.ui.getActivePanel();
+      const { left, top } = this._qnPromptShellPosition(panel);
+      const box = document.createElement('div');
+      box.style.cssText = this._qnFrostedPromptShellStyle(left, top);
+      const lbl = document.createElement('div');
+      lbl.textContent = fieldName;
+      lbl.style.cssText = 'font-weight:600;font-size:14px;';
+
+      const inp = document.createElement('input');
+      const now = new Date();
+      this._fillDateInput(inp, now, includeTime);
+      inp.style.cssText = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border-default,#3f3f46);background:var(--input-bg-color,#181511);color:inherit;font-size:14px;box-sizing:border-box;outline:none;';
+
+      let timeRow = null;
+      if (!locked) {
+        timeRow = document.createElement('label');
+        timeRow.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;user-select:none;';
+        const timeCb = document.createElement('input');
+        timeCb.type = 'checkbox';
+        timeCb.checked = includeTime;
+        timeCb.style.cssText = 'width:16px;height:16px;cursor:pointer;accent-color:var(--color-primary-500,#a78bfa);flex-shrink:0;';
+        const timeLbl = document.createElement('span');
+        timeLbl.textContent = 'Include time';
+        timeRow.appendChild(timeCb);
+        timeRow.appendChild(timeLbl);
+        timeCb.addEventListener('change', () => {
+          const cur = this._parseDateInputValue(inp) || now;
+          includeTime = timeCb.checked;
+          this._fillDateInput(inp, cur, includeTime);
+          inp.focus();
+        });
+      }
+
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+      const skipBtn = document.createElement('button');
+      skipBtn.textContent = 'Skip';
+      skipBtn.style.cssText = this._btnStyle('secondary');
+      const okBtn = document.createElement('button');
+      okBtn.textContent = 'OK';
+      okBtn.style.cssText = this._btnStyle('primary');
+      btnRow.appendChild(skipBtn);
+      btnRow.appendChild(okBtn);
+      box.appendChild(lbl);
+      if (timeRow) box.appendChild(timeRow);
+      box.appendChild(inp);
+      box.appendChild(btnRow);
+      document.body.appendChild(box);
+      let resolved = false;
+      const done = (val) => {
+        if (resolved) return;
+        resolved = true;
+        box.remove();
+        resolve(val);
+      };
+      const commit = () => {
+        const useTime = locked === 'date' ? false : includeTime;
+        let raw = inp.value;
+        if (!raw || !String(raw).trim()) {
+          this._fillDateInput(inp, new Date(), useTime);
+          raw = inp.value;
+        }
+        let d;
+        if (useTime) {
+          d = new Date(raw);
+        } else {
+          const parts = String(raw).split('-').map(Number);
+          if (parts.length < 3 || parts.some(n => Number.isNaN(n))) {
+            done({ displayValue: '', guid: undefined });
+            return;
+          }
+          const [y, m, day] = parts;
+          d = new Date(y, m - 1, day, 12, 0, 0);
+        }
+        if (isNaN(d.getTime())) {
+          done({ displayValue: '', guid: undefined });
+          return;
+        }
+        const { dateStr, timeStr } = this._formatDateParts(d);
+        const displayValue = useTime ? `${dateStr} ${timeStr}` : dateStr;
+        done({ displayValue, guid: undefined, dateValue: d, isDateTime: useTime });
+      };
+      okBtn.addEventListener('click', () => commit());
+      skipBtn.addEventListener('click', () => done({ displayValue: '', guid: undefined }));
+      inp.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          done(null);
+        }
+      });
+      const onOut = (e) => {
+        if (!box.contains(e.target)) {
+          document.removeEventListener('pointerdown', onOut, true);
+          done(null);
+        }
+      };
+      document.addEventListener('pointerdown', onOut, true);
+      requestAnimationFrame(() => inp.focus());
+    });
+  }
+
   _promptText(fieldName) {
     return new Promise((resolve) => {
       const panel = this.ui.getActivePanel();
-      let left = Math.round(window.innerWidth/2)-175, top = Math.round(window.innerHeight/3);
-      if (panel) { const el=panel.getElement(); if (el) { const r=el.getBoundingClientRect(); left=Math.round(r.left+r.width/2)-175; top=Math.round(r.top+80); } }
+      const { left, top } = this._qnPromptShellPosition(panel);
       const box = document.createElement('div');
-      box.style.cssText=`position:fixed;left:${left}px;top:${top}px;width:350px;background:var(--cmdpal-bg-color,var(--panel-bg-color,#1d1915));border:1px solid var(--border-default,#3f3f46);border-radius:10px;box-shadow:var(--cmdpal-box-shadow,0 8px 32px rgba(0,0,0,0.5));padding:16px;z-index:99999;display:flex;flex-direction:column;gap:10px;`;
+      box.style.cssText = this._qnFrostedPromptShellStyle(left, top);
       const lbl=document.createElement('div'); lbl.textContent=fieldName; lbl.style.cssText='font-weight:600;font-size:14px;';
       const inp=document.createElement('input'); inp.type='text'; inp.placeholder=`Enter ${fieldName}…`;
       inp.style.cssText='width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border-default,#3f3f46);background:var(--input-bg-color,#181511);color:inherit;font-size:14px;box-sizing:border-box;outline:none;';
@@ -936,6 +1659,15 @@ class Plugin extends AppPlugin {
     const inp=document.createElement('input'); inp.type='text'; inp.value=value;
     inp.style.cssText='flex:1;padding:3px 7px;border-radius:4px;font-size:12px;background:var(--bg-default,#18181b);color:inherit;border:1px solid var(--border-default,#3f3f46);outline:none;';
     inp.addEventListener('input',()=>onChange(inp.value)); return inp;
+  }
+
+  _miniCheckbox(checked, onChange) {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.style.cssText = 'width:16px;height:16px;cursor:pointer;accent-color:var(--color-primary-500,#a78bfa);';
+    cb.addEventListener('change', () => onChange(cb.checked));
+    return cb;
   }
 
   _tinyBtn(text, disabled, onClick) {

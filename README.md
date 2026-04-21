@@ -1,23 +1,47 @@
 # ThymerQuickNotePlugin
-Create a note in any configured collection with customizable title, prefilled, and prompted fields
 
-‼️ _In progress. Created by Claude and someone who knows nothing about coding! Suggestions and support very welcome!_ ‼️
+Create notes in configured collections with prompted fields, tokenized titles, and optional body templates.
 
-### FEATURES
-- Quickly create timestamped notes in any configured collection
-- Customizable title templates with smart tokens ({Date}, {Time}, {Collection}, custom fields)
-- Body templates — copy pre-defined content from template records into new notes 
-- Prompted fields — ask for values (text, references, choices) when creating a note
-- Settings screen to configure collections, fields, title templates, and body templates
-- Token substitution in both titles and template content for dynamic personalization
-- Export/import configuration for easy sharing and backup between devices
-- Accessible via sidebar button and command palette (Cmd+K)
-- Automatic date linking and reference field population
-- _Added 4/3_ Manual template inerstion option added: Cmd + K "Insert template here" into current note
+‼️ In progress. Created by AI, vibes, and someone who knows nothing about coding! Suggestions and support very welcome! ‼️
 
-### INSTRUCTIONS
-- Create a Collection called "Quick Note Templates" - Quick Note Settings will allow any records in this collection to be selectable as auto filled templates on a per collection basis 
+## Features
 
+- Quick note creation from sidebar button and command palette.
+- Customizable title templates with tokens:
+  - `{Date}`, `{Time}`, `{Collection}`, and prompted field tokens.
+- Prompted field types:
+  - text
+  - choice
+  - reference (including multi-reference selection)
+  - date/datetime prompt flow
+- Body templates copied from `Quick Note Templates` collection records.
+- Manual template insertion into the current record:
+  - Command Palette -> `Insert Template Here`
+- Export/import plugin configuration.
+- Automatic field population and token substitution in title + template content.
 
-### CURRENT KNOWN CHALLENGES
-- Improvements can be made to the choice selector fields... I think right now it's non functional
+## Storage mode
+
+Includes Path B storage support (`Plugin Settings` collection + localStorage mirror):
+
+- Command Palette: `Quick Note: Storage location…`
+- Can switch between local-only and synced settings.
+
+## UI updates in this sync
+
+- Added frosted prompt styling for input/date dialogs.
+- Expanded date prompt behavior with optional "include time" defaults.
+- Improved template and field-configuration controls in settings.
+
+## Setup
+
+Create a collection named:
+
+- `Quick Note Templates`
+
+Template records in that collection become selectable for per-collection auto-fill templates.
+
+## Files
+
+- `Quick Notes.js` - plugin code
+- `Quick Notes.json` - plugin metadata
