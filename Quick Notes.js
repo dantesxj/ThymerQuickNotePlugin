@@ -1225,16 +1225,17 @@ class Plugin extends AppPlugin {
         }
       }
       const box = document.createElement('div');
-      box.style.cssText = `position:fixed;left:${Math.max(12, left)}px;top:${Math.max(12, top)}px;width:380px;max-height:min(420px,calc(100vh - 24px));background:var(--cmdpal-bg-color,var(--panel-bg-color,#1d1915));border:1px solid var(--border-default,#3f3f46);border-radius:10px;box-shadow:var(--cmdpal-box-shadow,0 8px 32px rgba(0,0,0,0.5));padding:14px;z-index:99999;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;`;
+      box.style.cssText = this._qnFrostedPromptShellStyle(Math.max(12, left), Math.max(12, top), 380)
+        + 'max-height:min(420px,calc(100vh - 24px));padding:14px;box-sizing:border-box;';
       const lbl = document.createElement('div');
       lbl.textContent = fieldName + ' (select any, then OK)';
       lbl.style.cssText = 'font-weight:600;font-size:14px;';
       const search = document.createElement('input');
       search.type = 'text';
       search.placeholder = 'Filter records…';
-      search.style.cssText = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border-default,#3f3f46);background:var(--input-bg-color,#181511);color:inherit;font-size:13px;box-sizing:border-box;outline:none;';
+      search.style.cssText = 'width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(8,8,12,0.34);color:inherit;font-size:13px;box-sizing:border-box;outline:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
       const listWrap = document.createElement('div');
-      listWrap.style.cssText = 'flex:1;min-height:120px;max-height:260px;overflow:auto;border:1px solid var(--border-default,#3f3f46);border-radius:6px;padding:4px 2px;';
+      listWrap.style.cssText = 'flex:1;min-height:120px;max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:4px 2px;background:rgba(6,6,10,0.24);';
       const selected = new Map();
       const sorted = () => [...records].sort((a, b) => (a.getName() || '').localeCompare(b.getName() || '', undefined, { sensitivity: 'base' }));
       const renderList = () => {
@@ -1320,25 +1321,102 @@ class Plugin extends AppPlugin {
   _pickFromDropdown(options, placeholder) {
     return new Promise((resolve) => {
       const panel = this.ui.getActivePanel();
-      let left = Math.round(window.innerWidth / 2) - 175;
-      let top  = Math.round(window.innerHeight / 3);
-      if (panel) {
-        const el = panel.getElement();
-        if (el) { const r=el.getBoundingClientRect(); left=Math.round(r.left+r.width/2)-175; top=Math.round(r.top+80); }
-      }
-      const anchor = document.createElement('div');
-      anchor.style.cssText = `position:fixed;left:${left}px;top:${top}px;width:350px;height:0;pointer-events:none;`;
-      document.body.appendChild(anchor);
+      const { left, top } = this._qnPromptShellPosition(panel);
+      const box = document.createElement('div');
+      box.style.cssText = this._qnFrostedPromptShellStyle(Math.max(12, left), Math.max(12, top), 360)
+        + 'max-height:min(460px,calc(100vh - 24px));padding:14px;box-sizing:border-box;';
+
+      const search = document.createElement('input');
+      search.type = 'text';
+      search.placeholder = placeholder || 'Search...';
+      search.style.cssText = 'width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(8,8,12,0.34);color:inherit;font-size:13px;box-sizing:border-box;outline:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
+
+      const listWrap = document.createElement('div');
+      listWrap.style.cssText = 'flex:1;min-height:140px;max-height:280px;overflow:auto;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:4px 2px;background:rgba(6,6,10,0.24);';
+
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.style.cssText = this._btnStyle('secondary');
+      btnRow.appendChild(cancelBtn);
+
+      box.appendChild(search);
+      box.appendChild(listWrap);
+      box.appendChild(btnRow);
+      document.body.appendChild(box);
+
       let resolved = false;
-      const done = (val) => { if (resolved) return; resolved=true; setTimeout(() => { if (anchor.parentNode) anchor.remove(); }, 300); resolve(val); };
-      this.ui.createDropdown({
-        attachedTo: anchor,
-        options: options.map(opt => ({ label: opt.label, icon: 'ti-chevron-right', onSelected: () => done(opt.value) })),
-        inputPlaceholder: placeholder || 'Search…',
-        width: 350,
+      let filtered = options.slice();
+      let activeIndex = 0;
+
+      const done = (val) => {
+        if (resolved) return;
+        resolved = true;
+        document.removeEventListener('pointerdown', onOut, true);
+        box.remove();
+        resolve(val);
+      };
+
+      const renderList = () => {
+        listWrap.innerHTML = '';
+        const q = (search.value || '').trim().toLowerCase();
+        filtered = options.filter(opt => !q || (opt.label || '').toLowerCase().includes(q));
+        if (activeIndex >= filtered.length) activeIndex = Math.max(0, filtered.length - 1);
+
+        filtered.forEach((opt, idx) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.textContent = opt.label;
+          row.style.cssText = 'display:block;width:100%;text-align:left;padding:7px 10px;border:0;background:transparent;color:inherit;border-radius:6px;cursor:pointer;font-size:13px;';
+          if (idx === activeIndex) row.style.background = 'rgba(255,255,255,0.12)';
+          row.addEventListener('mouseenter', () => {
+            activeIndex = idx;
+            renderList();
+          });
+          row.addEventListener('click', () => done(opt.value));
+          listWrap.appendChild(row);
+        });
+
+        if (!filtered.length) {
+          const empty = document.createElement('div');
+          empty.textContent = 'No matches.';
+          empty.style.cssText = 'padding:12px;color:var(--text-muted,#888);font-size:13px;text-align:center;';
+          listWrap.appendChild(empty);
+        }
+      };
+
+      search.addEventListener('input', () => {
+        activeIndex = 0;
+        renderList();
       });
-      const check = setInterval(() => { if (!document.body.contains(anchor)) { clearInterval(check); done(null); } }, 200);
-      setTimeout(() => { clearInterval(check); done(null); }, 30000);
+      search.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (filtered.length) activeIndex = Math.min(filtered.length - 1, activeIndex + 1);
+          renderList();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (filtered.length) activeIndex = Math.max(0, activeIndex - 1);
+          renderList();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (filtered[activeIndex]) done(filtered[activeIndex].value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          done(null);
+        }
+      });
+
+      cancelBtn.addEventListener('click', () => done(null));
+      const onOut = (e) => {
+        if (!box.contains(e.target)) done(null);
+      };
+      document.addEventListener('pointerdown', onOut, true);
+
+      renderList();
+      requestAnimationFrame(() => search.focus());
     });
   }
 
@@ -1440,13 +1518,22 @@ class Plugin extends AppPlugin {
     return { left, top };
   }
 
-  /** Frosted panel styling aligned with journal footer plugins (Today's Notes / Highlights). */
-  _qnFrostedPromptShellStyle(left, top) {
-    return `position:fixed;left:${left}px;top:${top}px;width:350px;`
-      + `background:rgba(30,28,36,0.72);`
-      + `backdrop-filter:blur(18px) saturate(1.35);-webkit-backdrop-filter:blur(18px) saturate(1.35);`
-      + `border:1px solid rgba(255,255,255,0.12);border-radius:12px;`
-      + `box-shadow:0 12px 40px rgba(0,0,0,0.45);`
+  _qnThemeRgb(varName, fallbackHex) {
+    const val = (getComputedStyle(document.documentElement).getPropertyValue(varName) || '').trim() || fallbackHex;
+    const m = val.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m) return '24,24,34';
+    return `${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)}`;
+  }
+
+  /** Frosted panel styling aligned with workspace transparency and command palette tones. */
+  _qnFrostedPromptShellStyle(left, top, width = 350) {
+    const panelRgb = this._qnThemeRgb('--color-bg-900', '#11111b');
+    const cmdpalRgb = this._qnThemeRgb('--color-bg-700', '#1e1e2e');
+    return `position:fixed;left:${left}px;top:${top}px;width:${width}px;`
+      + `background:linear-gradient(180deg,rgba(${cmdpalRgb},0.70),rgba(${panelRgb},0.62));`
+      + `backdrop-filter:blur(16px) saturate(1.28);-webkit-backdrop-filter:blur(16px) saturate(1.28);`
+      + `border:1px solid rgba(255,255,255,0.14);border-radius:12px;`
+      + `box-shadow:var(--cmdpal-box-shadow,0 12px 40px rgba(0,0,0,0.45));`
       + `padding:16px;z-index:99999;display:flex;flex-direction:column;gap:10px;`;
   }
 
