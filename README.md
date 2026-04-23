@@ -43,5 +43,5 @@ Template records in that collection become selectable for per-collection auto-fi
 
 ## Files
 
-- `Quick Notes.js` - plugin code
-- `Quick Notes.json` - plugin metadata
+- `plugin.js` - plugin code
+- `plugin.json` - plugin metadata
