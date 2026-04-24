@@ -1,4 +1,6 @@
-# ThymerQuickNotePlugin
+# Prompt+ (Thymer extension)
+
+Repository folder: `ThymerPromptPlus`. Legacy plugin / Path B id: `quick-notes`.
 
 Create notes in configured collections with prompted fields, tokenized titles, and optional body templates.
 
