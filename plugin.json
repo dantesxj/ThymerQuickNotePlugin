@@ -1,7 +1,7 @@
 {
 	"ver": 1,
-	"name": "Quick Note",
-	"icon": "ti-pencil",
+	"name": "Prompt+",
+	"icon": "ti-message-plus",
 	"item_name": "Note",
 	"description": "Add templated Notes with per-Collection Property Prompts & Auto-fills",
 	"show_sidebar_items": true,

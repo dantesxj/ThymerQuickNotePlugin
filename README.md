@@ -22,7 +22,7 @@ Create notes in configured collections with prompted fields, tokenized titles, a
 
 ## Storage mode
 
-Includes Path B storage support (`Plugin Settings` collection + localStorage mirror):
+Includes Path B storage support (**Plugin Backend** collection + localStorage mirror; legacy **Plugin Settings** name still resolved):
 
 - Command Palette: `Quick Note: Storage location…`
 - Can switch between local-only and synced settings.
