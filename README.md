@@ -16,7 +16,7 @@ Create notes in configured collections with prompted fields, tokenized titles, a
   - choice
   - reference (including multi-reference selection)
   - date/datetime prompt flow
-- Body templates copied from `Quick Note Templates` collection records.
+- Body templates copied from the **Prompt+ Templates** collection (auto-created on load; existing workspaces may still use the legacy name **Quick Note Templates**).
 - Manual template insertion into the current record:
   - Command Palette -> `Insert Template Here`
 - Export/import plugin configuration.
@@ -37,11 +37,7 @@ Includes Path B storage support (**Plugin Backend** collection + localStorage mi
 
 ## Setup
 
-Create a collection named:
-
-- `Quick Note Templates`
-
-Template records in that collection become selectable for per-collection auto-fill templates.
+The plugin **creates a `Prompt+ Templates` collection** if it does not exist. If you already have **`Quick Note Templates`**, that collection is used instead. Add one record per body template; those records become selectable for per-collection auto-fill templates.
 
 ## Files
 

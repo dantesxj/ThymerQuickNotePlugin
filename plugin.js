@@ -1465,12 +1465,237 @@
   footer surfaces records automatically based on their When date.
 
   CONFIG stored in localStorage "qn_config_v2"
-  TEMPLATES stored in a collection named "Quick Note Templates"
+  TEMPLATES: auto-ensure collection "Prompt+ Templates" (legacy: "Quick Note Templates")
 */
 
 const QN_STORAGE_KEY    = 'qn_config_v2';
-const QN_TEMPLATES_COLL = 'Quick Note Templates';
-/** Tabler icon + display name (collection "Quick Note Templates" unchanged for existing workspaces). */
+const QN_TEMPLATES_COLL = 'Prompt+ Templates';
+const QN_TEMPLATES_COLL_LEGACY = 'Quick Note Templates';
+const QN_TEMPLATES_ENSURE_P = '__thymerQnTemplatesEnsureP_v1';
+const QN_TEMPLATES_LOCK = 'thymer-ext-prompt-plus-templates-ensure-v1';
+const QN_SERIAL_DATA_CREATE_P = '__thymerExtSerializedDataCreateP_v1';
+const QN_GETALL_SANITY = '__thymerExtGetAllCollectionsSanityV1';
+const QN_DEBUG_TEMPLATES = (() => {
+  try {
+    const o = localStorage.getItem('thymerext_debug_collections');
+    if (o === '0' || o === 'off' || o === 'false') return false;
+  } catch (_) {}
+  return true;
+})();
+
+function qnDlogTemplates(phase, extra) {
+  if (!QN_DEBUG_TEMPLATES) return;
+  try {
+    const row = { phase, t: typeof performance !== 'undefined' && performance.now ? +performance.now().toFixed(1) : 0, ...extra };
+    console.info('[ThymerExt/PromptPlusTemplates]', row);
+  } catch (_) {
+    void 0;
+  }
+}
+
+function qnGetSharedDeduplicationWindow() {
+  try {
+    if (typeof window === 'undefined') return typeof globalThis !== 'undefined' ? globalThis : {};
+    const t = window.top;
+    if (t) {
+      void t.document;
+      return t;
+    }
+  } catch (_) {}
+  try {
+    let w = typeof window !== 'undefined' ? window : null;
+    let best = w || globalThis;
+    while (w) {
+      try {
+        void w.document;
+        best = w;
+      } catch (_) {
+        break;
+      }
+      if (w === w.top) break;
+      w = w.parent;
+    }
+    return best;
+  } catch (_) {
+    return typeof window !== 'undefined' ? window : globalThis;
+  }
+}
+
+function qnTouchGetAllSanityFromCount(len) {
+  const n = Number(len) || 0;
+  const h = qnGetSharedDeduplicationWindow();
+  if (!h[QN_GETALL_SANITY]) h[QN_GETALL_SANITY] = { nLast: 0, tLast: 0 };
+  const s = h[QN_GETALL_SANITY];
+  if (n > 0) {
+    s.nLast = n;
+    s.tLast = Date.now();
+  }
+}
+
+function qnIsSuspiciousEmptyAfterRecentNonEmptyList(currentLen) {
+  const c = Number(currentLen) || 0;
+  if (c > 0) {
+    qnTouchGetAllSanityFromCount(c);
+    return false;
+  }
+  const h = qnGetSharedDeduplicationWindow();
+  const s = h[QN_GETALL_SANITY];
+  if (!s || s.nLast <= 0 || !s.tLast) return false;
+  return Date.now() - s.tLast < 60_000;
+}
+
+function qnQueueDataCreateOnSharedWindow(factory) {
+  const host = qnGetSharedDeduplicationWindow();
+  if (QN_DEBUG_TEMPLATES) qnDlogTemplates('queueDataCreate_enter', {});
+  try {
+    if (!host[QN_SERIAL_DATA_CREATE_P] || typeof host[QN_SERIAL_DATA_CREATE_P].then !== 'function') {
+      host[QN_SERIAL_DATA_CREATE_P] = Promise.resolve();
+    }
+    return (host[QN_SERIAL_DATA_CREATE_P] = host[QN_SERIAL_DATA_CREATE_P].catch(() => {}).then(factory));
+  } catch (e) {
+    if (QN_DEBUG_TEMPLATES) qnDlogTemplates('queueDataCreate_fallback', { err: String((e && e.message) || e) });
+    return factory();
+  }
+}
+
+function findQnTemplatesCollectionInList(all) {
+  if (!Array.isArray(all)) return null;
+  const nameOf = (c) => {
+    try {
+      return String(c.getName?.() || '').trim();
+    } catch (_) {
+      return '';
+    }
+  };
+  for (const c of all) {
+    if (nameOf(c) === QN_TEMPLATES_COLL) return c;
+  }
+  for (const c of all) {
+    if (nameOf(c) === QN_TEMPLATES_COLL_LEGACY) return c;
+  }
+  return null;
+}
+
+function qnTemplatesSkipNamesLower() {
+  return new Set([QN_TEMPLATES_COLL.toLowerCase(), QN_TEMPLATES_COLL_LEGACY.toLowerCase(), 'journal', 'journals']);
+}
+
+function chainQnTemplatesEnsure(work) {
+  const root = qnGetSharedDeduplicationWindow();
+  try {
+    if (!root[QN_TEMPLATES_ENSURE_P]) root[QN_TEMPLATES_ENSURE_P] = Promise.resolve();
+  } catch (_) {
+    return Promise.resolve().then(work);
+  }
+  root[QN_TEMPLATES_ENSURE_P] = root[QN_TEMPLATES_ENSURE_P].catch(() => {}).then(work);
+  return root[QN_TEMPLATES_ENSURE_P];
+}
+
+async function runQnTemplatesEnsureBody(data) {
+  if (QN_DEBUG_TEMPLATES) {
+    qnDlogTemplates('ensureBody_start', {});
+    try {
+      if (data && data.getAllCollections) {
+        const a = await data.getAllCollections();
+        const n = Array.isArray(a) ? a.length : 0;
+        qnDlogTemplates('ensureBody_collections', { count: n, names: (a || []).slice(0, 20).map((c) => { try { return String(c.getName?.() || '').trim(); } catch (_) { return '(err)'; } }) });
+        if (n > 0) qnTouchGetAllSanityFromCount(n);
+      }
+    } catch (e) {
+      qnDlogTemplates('ensureBody_getAll_failed', { err: String((e && e.message) || e) });
+    }
+  }
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const a = await data.getAllCollections();
+      if (findQnTemplatesCollectionInList(a)) return;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 50 + attempt * 50));
+    }
+    if (findQnTemplatesCollectionInList(await data.getAllCollections())) return;
+    await new Promise((r) => setTimeout(r, 120));
+    if (findQnTemplatesCollectionInList(await data.getAllCollections())) return;
+    let preCreateLen = 0;
+    try {
+      if (data && data.getAllCollections) {
+        const all0 = await data.getAllCollections();
+        preCreateLen = Array.isArray(all0) ? all0.length : 0;
+        if (preCreateLen > 0) qnTouchGetAllSanityFromCount(preCreateLen);
+      }
+      if (preCreateLen === 0) {
+        await new Promise((r) => setTimeout(r, 150));
+        if (data && data.getAllCollections) {
+          const all1 = await data.getAllCollections();
+          preCreateLen = Array.isArray(all1) ? all1.length : 0;
+          if (preCreateLen > 0) qnTouchGetAllSanityFromCount(preCreateLen);
+        }
+      }
+      if (preCreateLen > 0 && findQnTemplatesCollectionInList(await data.getAllCollections())) return;
+      if (qnIsSuspiciousEmptyAfterRecentNonEmptyList(preCreateLen) && preCreateLen === 0) {
+        if (QN_DEBUG_TEMPLATES) {
+          try {
+            const h = qnGetSharedDeduplicationWindow();
+            qnDlogTemplates('refuse_create_flaky_getall_empty', { s: h[QN_GETALL_SANITY] || null });
+          } catch (_) {
+            qnDlogTemplates('refuse_create_flaky_getall_empty', {});
+          }
+        }
+        return;
+      }
+    } catch (_) {
+      void 0;
+    }
+    if (findQnTemplatesCollectionInList(await data.getAllCollections())) return;
+    if (QN_DEBUG_TEMPLATES) qnDlogTemplates('ensureBody_about_to_create', {});
+    const coll = await qnQueueDataCreateOnSharedWindow(() => data.createCollection());
+    if (!coll || typeof coll.getConfiguration !== 'function' || typeof coll.saveConfiguration !== 'function') return;
+    const MANAGED_U = { fields: false, views: false, sidebar: false };
+    const base = coll.getConfiguration() || {};
+    const conf = {
+      ...base,
+      ver: typeof base.ver === 'number' ? base.ver : 1,
+      name: QN_TEMPLATES_COLL,
+      item_name: base.item_name || 'Template',
+      icon: base.icon || 'ti-crane',
+      home: false,
+      description: 'Body templates for Prompt+ — each record is one template; content is copied into new notes.',
+      show_sidebar_items: true,
+      show_cmdpal_items: true,
+      managed: MANAGED_U,
+    };
+    if ((await coll.saveConfiguration(conf)) === false) return;
+    await new Promise((r) => setTimeout(r, 250));
+  } catch (e) {
+    console.error('[Prompt+] ensure templates collection', e);
+  }
+}
+
+function runQnTemplatesEnsureWithLocksOrChain(data) {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function') {
+      if (QN_DEBUG_TEMPLATES) qnDlogTemplates('ensure_route', { via: 'locks', lockName: QN_TEMPLATES_LOCK });
+      return navigator.locks.request(QN_TEMPLATES_LOCK, () => runQnTemplatesEnsureBody(data));
+    }
+  } catch (e) {
+    if (QN_DEBUG_TEMPLATES) qnDlogTemplates('ensure_locks_threw', { err: String((e && e.message) || e) });
+  }
+  if (QN_DEBUG_TEMPLATES) qnDlogTemplates('ensure_route', { via: 'hierarchyChain' });
+  return chainQnTemplatesEnsure(() => runQnTemplatesEnsureBody(data));
+}
+
+function ensureQnTemplatesCollection(data) {
+  if (QN_DEBUG_TEMPLATES) {
+    try {
+      const dHint = data ? `ctor=${(data && data.constructor && data.constructor.name) || '?'}` : 'null';
+      qnDlogTemplates('ensureQnTemplatesCollection', { dataHint: dHint });
+    } catch (_) {
+      qnDlogTemplates('ensureQnTemplatesCollection', {});
+    }
+  }
+  if (!data || typeof data.getAllCollections !== 'function' || typeof data.createCollection !== 'function') {
+    return Promise.resolve();
+  }
+  return runQnTemplatesEnsureWithLocksOrChain(data);
+}
 const QN_PLUGIN_ICON = 'ti-message-plus';
 const QN_PLUGIN_NAME = 'Prompt+';
 
@@ -1486,6 +1711,11 @@ class Plugin extends AppPlugin {
       data: this.data,
       ui: this.ui,
     }) ?? (console.warn(`[${QN_PLUGIN_NAME}] ThymerPluginSettings runtime missing (redeploy full plugin .js from repo).`), Promise.resolve()));
+    try {
+      await ensureQnTemplatesCollection(this.data);
+    } catch (e) {
+      console.warn(`[${QN_PLUGIN_NAME}] ensure templates collection`, e);
+    }
     this._eventHandlerIds = [];
     this._running         = false; // guard against double-trigger
     this._config          = this._loadConfig();
@@ -1579,12 +1809,18 @@ class Plugin extends AppPlugin {
     const el = panel.getElement();
     if (!el) return;
     panel.setTitle(`${QN_PLUGIN_NAME} — Configure`);
+    try {
+      await ensureQnTemplatesCollection(this.data);
+    } catch (_) {
+      void 0;
+    }
 
     const allCollections  = await this.data.getAllCollections();
-    const skip            = new Set(['journal', 'journals', QN_TEMPLATES_COLL.toLowerCase()]);
+    const skip            = qnTemplatesSkipNamesLower();
     const candidates      = allCollections.filter(c => !skip.has((c.getName() || '').toLowerCase()));
-    const templatesColl   = allCollections.find(c => c.getName() === QN_TEMPLATES_COLL);
+    const templatesColl   = findQnTemplatesCollectionInList(allCollections);
     const templateRecords = templatesColl ? await templatesColl.getAllRecords() : [];
+    const templatesCollDisplayName = templatesColl ? (templatesColl.getName() || QN_TEMPLATES_COLL) : QN_TEMPLATES_COLL;
 
     const collData = await Promise.all(candidates.map(async (coll) => {
       const name   = coll.getName() || '';
@@ -1634,7 +1870,7 @@ class Plugin extends AppPlugin {
       if (!templatesColl) {
         const tmplHint = document.createElement('div');
         tmplHint.style.cssText = 'padding:10px 14px;border-radius:8px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.2);font-size:12px;color:var(--text-muted,#888);';
-        tmplHint.innerHTML = `<strong style="color:#fbbf24;">Templates tip:</strong> Create a collection called <strong>"${QN_TEMPLATES_COLL}"</strong> and add template records there.`;
+        tmplHint.innerHTML = `<strong style="color:#fbbf24;">Templates tip:</strong> A <strong>"${QN_TEMPLATES_COLL}"</strong> collection is created automatically when the plugin loads; if you still do not see it, reload. Add template records there.`;
         wrap.appendChild(tmplHint);
       }
 
@@ -1642,7 +1878,7 @@ class Plugin extends AppPlugin {
         wrap.appendChild(this._renderCollCard(item, idx, activeIndex === idx, () => {
           activeIndex = activeIndex === idx ? null : idx;
           render();
-        }, render, templateRecords));
+        }, render, templateRecords, templatesCollDisplayName));
       });
 
       const saveBtn = document.createElement('button');
@@ -1729,7 +1965,7 @@ class Plugin extends AppPlugin {
 
   // ── Collection card ───────────────────────────────────────────────────────
 
-  _renderCollCard(item, idx, isOpen, onToggleOpen, rerender, templateRecords) {
+  _renderCollCard(item, idx, isOpen, onToggleOpen, rerender, templateRecords, templatesCollDisplayName) {
     const card = document.createElement('div');
     card.style.cssText = `border:1px solid ${item.enabled ? 'var(--color-primary-500,#a78bfa)' : 'var(--border-default,#3f3f46)'};border-radius:10px;overflow:hidden;background:${item.enabled ? 'rgba(167,139,250,0.07)' : 'var(--bg-hover,rgba(255,255,255,0.03))'};`;
 
@@ -1756,7 +1992,7 @@ class Plugin extends AppPlugin {
     body.appendChild(this._renderFieldsSection(item, rerender));
     body.appendChild(this._renderAutoFillSection(item, rerender));
     body.appendChild(this._renderTitleSection(item));
-    body.appendChild(this._renderTemplateSection(item, templateRecords));
+    body.appendChild(this._renderTemplateSection(item, templateRecords, templatesCollDisplayName));
     card.appendChild(body);
     return card;
   }
@@ -2005,9 +2241,10 @@ class Plugin extends AppPlugin {
     return sec;
   }
 
-  _renderTemplateSection(item, templateRecords) {
+  _renderTemplateSection(item, templateRecords, templatesCollDisplayName) {
+    const disp = templatesCollDisplayName || QN_TEMPLATES_COLL;
     const sec = document.createElement('div');
-    sec.appendChild(this._cfgLabel('Body Template', `Pick a record from "${QN_TEMPLATES_COLL}" — its content is copied into every new note`));
+    sec.appendChild(this._cfgLabel('Body Template', `Pick a record from "${disp}" — its content is copied into every new note`));
     const sel=document.createElement('select');
     sel.style.cssText='width:100%;padding:8px 10px;border-radius:6px;font-size:13px;background:var(--bg-default,#18181b);color:inherit;border:1px solid var(--border-default,#3f3f46);';
     const noneOpt=document.createElement('option'); noneOpt.value=''; noneOpt.textContent='— no template —'; sel.appendChild(noneOpt);
@@ -2015,7 +2252,7 @@ class Plugin extends AppPlugin {
       const opt=document.createElement('option'); opt.value=rec.guid; opt.textContent=rec.getName()||'Untitled';
       if (rec.guid===item.templateGuid) opt.selected=true; sel.appendChild(opt);
     }
-    if (templateRecords.length===0) { const d=document.createElement('option'); d.disabled=true; d.textContent=`(create "${QN_TEMPLATES_COLL}" collection first)`; sel.appendChild(d); }
+    if (templateRecords.length === 0) { const d=document.createElement('option'); d.disabled=true; d.textContent=`(add template records in "${disp}")`; sel.appendChild(d); }
     sel.addEventListener('change', () => { item.templateGuid=sel.value; });
     const tokenNote=document.createElement('div');
     tokenNote.style.cssText='font-size:11px;color:var(--text-muted,#888);margin-top:6px;font-family:monospace;';
@@ -2033,6 +2270,11 @@ class Plugin extends AppPlugin {
     if (this._running) return;
     this._running = true;
     try {
+      try {
+        await ensureQnTemplatesCollection(this.data);
+      } catch (_) {
+        void 0;
+      }
       const allCollections = await this.data.getAllCollections();
       const eligible       = this._getEnabledCollections(allCollections);
 
@@ -2188,16 +2430,22 @@ class Plugin extends AppPlugin {
         return;
       }
 
+      try {
+        await ensureQnTemplatesCollection(this.data);
+      } catch (_) {
+        void 0;
+      }
       const allCollections = await this.data.getAllCollections();
-      const templatesColl = allCollections.find(c => c.getName() === QN_TEMPLATES_COLL);
+      const templatesColl = findQnTemplatesCollectionInList(allCollections);
       if (!templatesColl) {
-        this.ui.addToaster({ title: 'No templates', message: `Create a "${QN_TEMPLATES_COLL}" collection first.`, dismissible: true });
+        this.ui.addToaster({ title: 'No templates', message: `The templates collection ( "${QN_TEMPLATES_COLL}" or "${QN_TEMPLATES_COLL_LEGACY}" ) was not found. Try reloading.`, dismissible: true });
         return;
       }
 
+      const tName = templatesColl.getName() || QN_TEMPLATES_COLL;
       const templateRecords = await templatesColl.getAllRecords();
       if (templateRecords.length === 0) {
-        this.ui.addToaster({ title: 'No templates', message: `Add templates to the "${QN_TEMPLATES_COLL}" collection.`, dismissible: true });
+        this.ui.addToaster({ title: 'No templates', message: `Add template records in "${tName}".`, dismissible: true });
         return;
       }
 
@@ -2218,7 +2466,7 @@ class Plugin extends AppPlugin {
 
   async _insertTemplateIntoRecord(record, templateGuid, allCollections) {
     try {
-      const templatesColl = allCollections.find(c => c.getName() === QN_TEMPLATES_COLL);
+      const templatesColl = findQnTemplatesCollectionInList(allCollections);
       if (!templatesColl) return;
 
       const templateRecords = await templatesColl.getAllRecords();
@@ -2261,7 +2509,7 @@ class Plugin extends AppPlugin {
 
   async _applyTemplate(templateGuid, recordGuid, tokens, allCollections) {
     try {
-      const templatesColl   = allCollections.find(c => c.getName() === QN_TEMPLATES_COLL);
+      const templatesColl   = findQnTemplatesCollectionInList(allCollections);
       if (!templatesColl) return;
       const templateRecords = await templatesColl.getAllRecords();
       const templateRecord  = templateRecords.find(r => r.guid === templateGuid);
